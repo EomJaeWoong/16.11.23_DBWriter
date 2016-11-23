@@ -17,7 +17,7 @@ HANDLE hDBWriterThread;
 
 unsigned __stdcall UpdateThread(LPVOID updateArg)
 {
-	srand(time(NULL));
+	srand(time(NULL) + (int)updateArg);
 	__int64 iAccountNo = 0;
 	int iMessageType;
 	int iStage = 1;
@@ -32,20 +32,23 @@ unsigned __stdcall UpdateThread(LPVOID updateArg)
 	{
 		Sleep(200);
 
-		iMessageType = rand() % 3;
+		//iMessageType = rand() % 3;
+		iMessageType = df_DBQUERY_MSG_NEW_ACCOUNT;
 
+		StreamQueue.Lock();
 		switch (iMessageType)
 		{
 		case df_DBQUERY_MSG_NEW_ACCOUNT:	
 			st_DBQUERY_MSG_NEW_ACCOUNT stAccount;
-			memset(&stAccount, 0, sizeof(st_DBQUERY_MSG_NEW_ACCOUNT));
 
 			//ID, PW 만들기
 			iIDlength = (rand() % 6) + 4;
 			iPWlength = (rand() % 6) + 4;
 
-			chID = new char[iIDlength];
-			chPw = new char[iPWlength];
+			chID = new char[iIDlength+1];
+			memset(chID, 0, iIDlength+1);
+			chPw = new char[iPWlength+1];
+			memset(chPw, 0, iPWlength+1);
 
 			for (int iCnt = 0; iCnt < iIDlength; iCnt++)
 				chID[iCnt] = (rand() % 92) + 33;
@@ -57,35 +60,30 @@ unsigned __stdcall UpdateThread(LPVOID updateArg)
 			header.iType = df_DBQUERY_MSG_NEW_ACCOUNT;
 			header.iSize = sizeof(st_DBQUERY_MSG_NEW_ACCOUNT);
 
-			strcpy_s(stAccount.szID, sizeof(stAccount.szID), chID);
-			strcpy_s(stAccount.szPassword, sizeof(stAccount.szPassword), chPw);
+			strcpy_s(stAccount.szID, sizeof(chID), chID);
+			strcpy_s(stAccount.szPassword, sizeof(chPw), chPw);
 
-			//만든 구조체 보내주기
-			StreamQueue.Lock();
-
+			//만든 구조체 보내주기	
 			StreamQueue.Put((char *)&header, sizeof(st_DBQUERY_HEADER));
 			StreamQueue.Put((char *)&stAccount, header.iSize);
 
-			StreamQueue.Unlock();
+			printf("MSG_NEW_ACCOUNT isDone UPDATE.\n");
 			break;
 
 		case df_DBQUERY_MSG_STAGE_CLEAR:
 			st_DBQUERY_MSG_STAGE_CLEAR stStageClear;
-			memset(&stStageClear, 0, sizeof(st_DBQUERY_MSG_STAGE_CLEAR));
 
 			header.iType = df_DBQUERY_MSG_STAGE_CLEAR;
 			header.iSize = sizeof(st_DBQUERY_MSG_STAGE_CLEAR);
 
-			stStageClear.iAccountNo = iAccountNo++;
-			stStageClear.iStageID = iStage++;
+			stStageClear.iAccountNo = (__int64)InterlockedIncrement((long*)&iAccountNo);
+			stStageClear.iStageID = (int)InterlockedIncrement((long*)&iStage);
 
 			//만든 구조체 보내주기
-			StreamQueue.Lock();
-
 			StreamQueue.Put((char *)&header, sizeof(st_DBQUERY_HEADER));
 			StreamQueue.Put((char *)&stStageClear, header.iSize);
 
-			StreamQueue.Unlock();
+			printf("MSG_STAGE_CLEAR isDone UPDATE.\n");
 			break;
 
 		case df_DBQUERY_MSG_PLAYER_UPDATE:
@@ -95,9 +93,10 @@ unsigned __stdcall UpdateThread(LPVOID updateArg)
 			break;
 
 		default:
-			printf("Error : Not Correct Type...\n");
+			printf("Update Error : Not Correct Type...\n");
 			return -1;
 		}
+		StreamQueue.Unlock();
 	}
 
 	return 0;
@@ -136,18 +135,15 @@ unsigned __stdcall DBWriterThread(LPVOID writerArg)
 	mysql_query(connection, "set session character_set_client=euckr;");
 
 	st_DBQUERY_HEADER header;
-	char query[100];
-	HANDLE hThread[3] = { hUpdateThread[0], hUpdateThread[1], hDBWriterThread };
+	char query[200];
 
 	while (1)
 	{
 		if (b_shutdown && StreamQueue.GetUseSize() == 0)	return 0;
 
-		WaitForMultipleObjects(3, hThread, FALSE, INFINITE);
-
+		StreamQueue.Lock();
 		if (StreamQueue.GetUseSize() > 0)
 		{
-			StreamQueue.Lock();
 			StreamQueue.Get((char *)&header, sizeof(st_DBQUERY_HEADER));
 
 			switch (header.iType)
@@ -155,15 +151,17 @@ unsigned __stdcall DBWriterThread(LPVOID writerArg)
 			case df_DBQUERY_MSG_NEW_ACCOUNT:
 				st_DBQUERY_MSG_NEW_ACCOUNT stAccount;
 				StreamQueue.Get((char *)&stAccount, header.iSize);
-				sprintf_s(query, 100, "INSERT INTO `%s`.`account` (`id`, `password`) VALUES ('%s', '%s');",
+				sprintf_s(query, 200, "INSERT INTO `%s`.`account` (`id`, `password`) VALUES ('%s', '%s');",
 					DB_NAME, stAccount.szID, stAccount.szPassword);
+				printf("MSG_NEW_ACCOUNT isDone.\n");
 				break;
 
 			case df_DBQUERY_MSG_STAGE_CLEAR:
 				st_DBQUERY_MSG_STAGE_CLEAR stStageClear;
 				StreamQueue.Get((char *)&stStageClear, header.iSize);
-				sprintf_s(query, 100, "INSERT INTO `%s`.`stage` (`account_id`, `stageid`) VALUES ('%s', '%s');",
+				sprintf_s(query, 200, "INSERT INTO `%s`.`stage` (`account_id`, `stageid`) VALUES ('%s', '%s');",
 					DB_NAME, stStageClear.iAccountNo, stStageClear.iStageID);
+				printf("MSG_STAGE_CLEAR isDone.\n");
 				break;
 
 			case df_DBQUERY_MSG_PLAYER_UPDATE:
@@ -171,11 +169,11 @@ unsigned __stdcall DBWriterThread(LPVOID writerArg)
 				break;
 
 			default:
-				printf("Error : Not Correct Type...\n");
+				printf("DBWriter Error : Not Correct Type...\n");
 				return 0;
 			}
-			StreamQueue.Unlock();
 		}
+		StreamQueue.Unlock();
 	}
 }
 
@@ -194,7 +192,7 @@ void main()
 	Initial();
 
 	hUpdateThread[0] = (HANDLE)_beginthreadex(NULL, 0, UpdateThread, (LPVOID)0, 0, (unsigned int *)&dwThreadID);
-	hUpdateThread[1] = (HANDLE)_beginthreadex(NULL, 0, UpdateThread, (LPVOID)0, 0, (unsigned int *)&dwThreadID);
+	hUpdateThread[1] = (HANDLE)_beginthreadex(NULL, 0, UpdateThread, (LPVOID)2000, 0, (unsigned int *)&dwThreadID);
 	hDBWriterThread = (HANDLE)_beginthreadex(NULL, 0, DBWriterThread, (LPVOID)0, 0, (unsigned int *)&dwThreadID);
 
 	while (1)
