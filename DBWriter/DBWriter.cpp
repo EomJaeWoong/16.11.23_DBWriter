@@ -10,7 +10,7 @@
 #include "DBWriter.h"
 
 BOOL b_shutdown;
-CAyaStreamSQ StreamQueue;
+CAyaStreamSQ StreamQueue(10000);
 
 HANDLE hUpdateThread[2];
 HANDLE hDBWriterThread;
@@ -32,6 +32,9 @@ unsigned __stdcall UpdateThread(LPVOID updateArg)
 	{
 		Sleep(200);
 
+		if (StreamQueue.GetFreeSize() <= sizeof(st_DBQUERY_HEADER))
+			continue;
+
 		//iMessageType = rand() % 3;
 		iMessageType = df_DBQUERY_MSG_NEW_ACCOUNT;
 
@@ -40,6 +43,10 @@ unsigned __stdcall UpdateThread(LPVOID updateArg)
 		{
 		case df_DBQUERY_MSG_NEW_ACCOUNT:	
 			st_DBQUERY_MSG_NEW_ACCOUNT stAccount;
+
+			if (StreamQueue.GetFreeSize() <=
+				sizeof(st_DBQUERY_HEADER) + sizeof(st_DBQUERY_MSG_NEW_ACCOUNT))
+				continue;
 
 			//ID, PW ¸¸µé±â
 			iIDlength = (rand() % 6) + 4;
@@ -72,6 +79,10 @@ unsigned __stdcall UpdateThread(LPVOID updateArg)
 
 		case df_DBQUERY_MSG_STAGE_CLEAR:
 			st_DBQUERY_MSG_STAGE_CLEAR stStageClear;
+
+			if (StreamQueue.GetFreeSize() <=
+				sizeof(st_DBQUERY_HEADER) + sizeof(st_DBQUERY_MSG_STAGE_CLEAR))
+				continue;
 
 			header.iType = df_DBQUERY_MSG_STAGE_CLEAR;
 			header.iSize = sizeof(st_DBQUERY_MSG_STAGE_CLEAR);
