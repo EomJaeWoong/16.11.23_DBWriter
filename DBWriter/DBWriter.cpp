@@ -1,16 +1,17 @@
-//#include <windows.h>
-#include <process.h>
 #include <conio.h>
 #include <my_global.h>
 #include <mysql.h>
-
-#pragma comment (lib, "mysql/lib/vs12/mysqlclient.lib")
+#include <process.h>
 
 #include "StreamQueue.h"
 #include "DBWriter.h"
 
+#pragma comment (lib, "winmm.lib")
+#pragma comment (lib, "mysql/lib/vs12/mysqlclient.lib")
+
 BOOL b_shutdown;
 CAyaStreamSQ StreamQueue(10000);
+DWORD g_UpdateTime;
 
 HANDLE hUpdateThread[2];
 HANDLE hDBWriterThread;
@@ -25,12 +26,16 @@ unsigned __stdcall UpdateThread(LPVOID updateArg)
 	char *chPw;
 	int iIDlength;
 	int iPWlength;
+	char chStringArray[35] = { 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k',
+		'l', 'm', 'n', 'o', 'p', 'q', 'r', 's', 't', 'u', 'v',
+		'w', 'x', 'y', 'z', '1', '2', '3', '4', '5', '6', '7',
+		'8', '9' };
 
 	st_DBQUERY_HEADER header;
 
 	while (!b_shutdown)
 	{
-		Sleep(200);
+		Sleep(10);
 
 		if (StreamQueue.GetFreeSize() <= sizeof(st_DBQUERY_HEADER))
 			continue;
@@ -49,8 +54,8 @@ unsigned __stdcall UpdateThread(LPVOID updateArg)
 				continue;
 
 			//ID, PW 만들기
-			iIDlength = (rand() % 6) + 4;
-			iPWlength = (rand() % 6) + 4;
+			iIDlength = (rand() % 15) + 4;
+			iPWlength = (rand() % 15) + 4;
 
 			chID = new char[iIDlength+1];
 			memset(chID, 0, iIDlength+1);
@@ -58,23 +63,22 @@ unsigned __stdcall UpdateThread(LPVOID updateArg)
 			memset(chPw, 0, iPWlength+1);
 
 			for (int iCnt = 0; iCnt < iIDlength; iCnt++)
-				chID[iCnt] = (rand() % 92) + 33;
+				chID[iCnt] = chStringArray[rand() % 35];
 
 			for (int iCnt = 0; iCnt < iPWlength; iCnt++)
-				chPw[iCnt] = (rand() % 92) + 33;
+				chPw[iCnt] = chStringArray[rand() % 35];
 
 			//구조체에 ID, PW 삽입
 			header.iType = df_DBQUERY_MSG_NEW_ACCOUNT;
 			header.iSize = sizeof(st_DBQUERY_MSG_NEW_ACCOUNT);
 
-			strcpy_s(stAccount.szID, sizeof(chID), chID);
-			strcpy_s(stAccount.szPassword, sizeof(chPw), chPw);
+			strcpy_s(stAccount.szID, sizeof(stAccount.szID), chID);
+			strcpy_s(stAccount.szPassword, sizeof(stAccount.szPassword), chPw);
 
 			//만든 구조체 보내주기	
 			StreamQueue.Put((char *)&header, sizeof(st_DBQUERY_HEADER));
 			StreamQueue.Put((char *)&stAccount, header.iSize);
 
-			printf("MSG_NEW_ACCOUNT isDone UPDATE.\n");
 			break;
 
 		case df_DBQUERY_MSG_STAGE_CLEAR:
@@ -94,7 +98,6 @@ unsigned __stdcall UpdateThread(LPVOID updateArg)
 			StreamQueue.Put((char *)&header, sizeof(st_DBQUERY_HEADER));
 			StreamQueue.Put((char *)&stStageClear, header.iSize);
 
-			printf("MSG_STAGE_CLEAR isDone UPDATE.\n");
 			break;
 
 		case df_DBQUERY_MSG_PLAYER_UPDATE:
@@ -127,6 +130,7 @@ unsigned __stdcall DBWriterThread(LPVOID writerArg)
 	MYSQL_ROW sql_row;			
 
 	int query_stat;
+	DWORD dwCountThread = 0;
 
 	// 초기화
 	mysql_init(&conn);
@@ -150,6 +154,10 @@ unsigned __stdcall DBWriterThread(LPVOID writerArg)
 
 	while (1)
 	{
+		if (g_UpdateTime == 0)
+			g_UpdateTime = timeGetTime();
+
+
 		if (b_shutdown && StreamQueue.GetUseSize() == 0)	return 0;
 
 		StreamQueue.Lock();
@@ -164,7 +172,6 @@ unsigned __stdcall DBWriterThread(LPVOID writerArg)
 				StreamQueue.Get((char *)&stAccount, header.iSize);
 				sprintf_s(query, 200, "INSERT INTO `%s`.`account` (`id`, `password`) VALUES ('%s', '%s');",
 					DB_NAME, stAccount.szID, stAccount.szPassword);
-				printf("MSG_NEW_ACCOUNT isDone.\n");
 				break;
 
 			case df_DBQUERY_MSG_STAGE_CLEAR:
@@ -172,7 +179,6 @@ unsigned __stdcall DBWriterThread(LPVOID writerArg)
 				StreamQueue.Get((char *)&stStageClear, header.iSize);
 				sprintf_s(query, 200, "INSERT INTO `%s`.`stage` (`account_id`, `stageid`) VALUES ('%s', '%s');",
 					DB_NAME, stStageClear.iAccountNo, stStageClear.iStageID);
-				printf("MSG_STAGE_CLEAR isDone.\n");
 				break;
 
 			case df_DBQUERY_MSG_PLAYER_UPDATE:
@@ -183,8 +189,23 @@ unsigned __stdcall DBWriterThread(LPVOID writerArg)
 				printf("DBWriter Error : Not Correct Type...\n");
 				return 0;
 			}
+
+			query_stat = mysql_query(connection, query);
+			dwCountThread++;
+			if (query_stat != 0)
+			{
+				fprintf(stderr, "Mysql query error : %s", mysql_error(&conn));
+				return 1;
+			}
 		}
 		StreamQueue.Unlock();
+
+		if (timeGetTime() - g_UpdateTime >= 1000)
+		{
+			printf("Writing Count : %d\n", dwCountThread);
+			g_UpdateTime = timeGetTime();
+			dwCountThread = 0;
+		}
 	}
 }
 
@@ -192,6 +213,7 @@ void Initial()
 {
 	StreamQueue.ClearBuffer();
 	b_shutdown = FALSE;
+	g_UpdateTime = 0;
 }
 
 void main()
@@ -221,6 +243,7 @@ void main()
 
 	DWORD ExitCode;
 
+	/*
 	wprintf(L"\n\n--- THREAD CHECK LOG -----------------------------\n\n");
 
 	GetExitCodeThread(hUpdateThread[0], &ExitCode);
@@ -237,4 +260,5 @@ void main()
 	if (ExitCode != 0)
 		wprintf(L"error - DBWriter Thread not exit\n");
 	CloseHandle(hDBWriterThread);
+	*/
 }
