@@ -35,7 +35,7 @@ unsigned __stdcall UpdateThread(LPVOID updateArg)
 
 	while (!b_shutdown)
 	{
-		Sleep(10);
+		Sleep(5);
 
 		if (StreamQueue.GetFreeSize() <= sizeof(st_DBQUERY_HEADER))
 			continue;
@@ -76,9 +76,10 @@ unsigned __stdcall UpdateThread(LPVOID updateArg)
 			strcpy_s(stAccount.szPassword, sizeof(stAccount.szPassword), chPw);
 
 			//만든 구조체 보내주기	
+			StreamQueue.Lock();
 			StreamQueue.Put((char *)&header, sizeof(st_DBQUERY_HEADER));
 			StreamQueue.Put((char *)&stAccount, header.iSize);
-
+			StreamQueue.Unlock();
 			break;
 
 		case df_DBQUERY_MSG_STAGE_CLEAR:
@@ -118,6 +119,30 @@ unsigned __stdcall UpdateThread(LPVOID updateArg)
 
 unsigned __stdcall DBWriterThread(LPVOID writerArg)
 {
+	/*
+	// connection 포인터는 conn을 가르킴(mysql함수들 리턴값이 MYSQL 포인터값)
+	MYSQL *connection = NULL, conn;
+
+	//Query에 대한 결과 값
+	MYSQL_RES sql_result;
+
+	// MYSQL_ROW는 문자열 포인터(이중포인터)
+	// utf8이라 바꿔줘야 됨(윈도우만 utf16)
+	MYSQL_ROW sql_row;
+	int query_stat;
+
+	mysql_init(&conn);
+
+	connection = mysql_real_connect(&conn, "127.0.0.1", "root", "1234", "test", 3306, (char*)NULL, 0);
+	if (connection == NULL)
+	{
+		fprintf(stderr, "Mysql connection error :%s\n", mysql_error(&conn));
+		return;
+	}
+
+	//mysql_store_result -> 전체 사이즈를 준비 후 쫙 읽어옴
+	//mysql_use_result -> 행 단위로 동적 할당을 해서 쌓아 나감
+	*/
 	//--------------------------------------------------------------
 	// MYSQL 객체
 	//--------------------------------------------------------------
@@ -150,7 +175,7 @@ unsigned __stdcall DBWriterThread(LPVOID writerArg)
 	mysql_query(connection, "set session character_set_client=euckr;");
 
 	st_DBQUERY_HEADER header;
-	char query[200];
+	char query[200] = { 0, };
 
 	while (1)
 	{
@@ -191,18 +216,22 @@ unsigned __stdcall DBWriterThread(LPVOID writerArg)
 			}
 
 			query_stat = mysql_query(connection, query);
-			dwCountThread++;
 			if (query_stat != 0)
 			{
 				fprintf(stderr, "Mysql query error : %s", mysql_error(&conn));
 				return 1;
 			}
+			memset(query, 0, 200);
+			dwCountThread++;
 		}
 		StreamQueue.Unlock();
 
 		if (timeGetTime() - g_UpdateTime >= 1000)
 		{
+			printf("------------------------------------\n");
 			printf("Writing Count : %d\n", dwCountThread);
+			printf("Using Queue size : %d\n", StreamQueue.GetUseSize());
+			printf("------------------------------------\n\n");
 			g_UpdateTime = timeGetTime();
 			dwCountThread = 0;
 		}
