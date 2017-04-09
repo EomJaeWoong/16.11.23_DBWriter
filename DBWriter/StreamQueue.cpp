@@ -74,15 +74,10 @@ int	CAyaStreamSQ::GetUseSize(void)
 /////////////////////////////////////////////////////////////////////////
 int	CAyaStreamSQ::GetFreeSize(void)
 {
-	if (m_iReadPos != m_iWritePos){
-		if (m_iReadPos >= m_iWritePos)
-			return m_iReadPos - m_iWritePos - 1;
-		else
-			return GetBufferSize() - m_iWritePos + m_iReadPos - 1;
-	}
-
+	if (m_iReadPos >= m_iWritePos)
+		return m_iReadPos - m_iWritePos - 1;
 	else
-		return GetBufferSize() - 1;
+		return GetBufferSize() - m_iWritePos + m_iReadPos - 1;
 }
 
 /////////////////////////////////////////////////////////////////////////

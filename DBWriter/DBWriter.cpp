@@ -10,18 +10,23 @@
 #pragma comment (lib, "mysql/lib/vs12/mysqlclient.lib")
 
 BOOL b_shutdown;
-CAyaStreamSQ StreamQueue(10000);
+CAyaStreamSQ StreamQueue(1000);
 DWORD g_UpdateTime;
 
 HANDLE hUpdateThread[2];
 HANDLE hDBWriterThread;
 
+__int64 iAccountNo;
+__int64 iStageNo;
+
+//--------------------------------------------------------------------------------------------
+// 메시지 생성 쓰레드
+//--------------------------------------------------------------------------------------------
 unsigned __stdcall UpdateThread(LPVOID updateArg)
 {
 	srand(time(NULL) + (int)updateArg);
-	__int64 iAccountNo = 0;
 	int iMessageType;
-	int iStage = 1;
+	
 	char *chID;
 	char *chPw;
 	int iIDlength;
@@ -40,13 +45,12 @@ unsigned __stdcall UpdateThread(LPVOID updateArg)
 		if (StreamQueue.GetFreeSize() <= sizeof(st_DBQUERY_HEADER))
 			continue;
 
-		//iMessageType = rand() % 3;
-		iMessageType = df_DBQUERY_MSG_NEW_ACCOUNT;
+		iMessageType = rand() % 3;
+		//iMessageType = df_DBQUERY_MSG_NEW_ACCOUNT;
 
-		StreamQueue.Lock();
 		switch (iMessageType)
 		{
-		case df_DBQUERY_MSG_NEW_ACCOUNT:	
+		case df_DBQUERY_MSG_NEW_ACCOUNT:									//회원가입
 			st_DBQUERY_MSG_NEW_ACCOUNT stAccount;
 
 			if (StreamQueue.GetFreeSize() <=
@@ -82,7 +86,7 @@ unsigned __stdcall UpdateThread(LPVOID updateArg)
 			StreamQueue.Unlock();
 			break;
 
-		case df_DBQUERY_MSG_STAGE_CLEAR:
+		case df_DBQUERY_MSG_STAGE_CLEAR:									//스테이지 클리어
 			st_DBQUERY_MSG_STAGE_CLEAR stStageClear;
 
 			if (StreamQueue.GetFreeSize() <=
@@ -92,26 +96,41 @@ unsigned __stdcall UpdateThread(LPVOID updateArg)
 			header.iType = df_DBQUERY_MSG_STAGE_CLEAR;
 			header.iSize = sizeof(st_DBQUERY_MSG_STAGE_CLEAR);
 
-			stStageClear.iAccountNo = (__int64)InterlockedIncrement((long*)&iAccountNo);
-			stStageClear.iStageID = (int)InterlockedIncrement((long*)&iStage);
+			stStageClear.iAccountNo = (__int64)InterlockedIncrement64((LONG64*)&iAccountNo);
+			stStageClear.iStageID = (__int64)InterlockedIncrement64((LONG64*)&iStageNo);
 
 			//만든 구조체 보내주기
+			StreamQueue.Lock();
 			StreamQueue.Put((char *)&header, sizeof(st_DBQUERY_HEADER));
 			StreamQueue.Put((char *)&stStageClear, header.iSize);
-
+			StreamQueue.Unlock();
 			break;
 
 		case df_DBQUERY_MSG_PLAYER_UPDATE:
 			st_DBQUERY_MSG_PLAYER_UPDATE stUpdate;
-			memset(&stUpdate, 0, sizeof(st_DBQUERY_MSG_PLAYER_UPDATE));
 
+			if (StreamQueue.GetFreeSize() <=
+				sizeof(st_DBQUERY_HEADER) + sizeof(st_DBQUERY_MSG_PLAYER_UPDATE))
+				continue;
+
+			header.iType = df_DBQUERY_MSG_PLAYER_UPDATE;
+			header.iSize = sizeof(st_DBQUERY_MSG_PLAYER_UPDATE);
+
+			stUpdate.iAccountNo = (__int64)InterlockedIncrement64((LONG64*)&iAccountNo);
+			stUpdate.iExp = 50;
+			stUpdate.iLevel = 1;
+
+			//만든 구조체 보내주기
+			StreamQueue.Lock();
+			StreamQueue.Put((char *)&header, sizeof(st_DBQUERY_HEADER));
+			StreamQueue.Put((char *)&stUpdate, header.iSize);
+			StreamQueue.Unlock();
 			break;
 
 		default:
 			printf("Update Error : Not Correct Type...\n");
 			return -1;
 		}
-		StreamQueue.Unlock();
 	}
 
 	return 0;
@@ -202,12 +221,15 @@ unsigned __stdcall DBWriterThread(LPVOID writerArg)
 			case df_DBQUERY_MSG_STAGE_CLEAR:
 				st_DBQUERY_MSG_STAGE_CLEAR stStageClear;
 				StreamQueue.Get((char *)&stStageClear, header.iSize);
-				sprintf_s(query, 200, "INSERT INTO `%s`.`stage` (`account_id`, `stageid`) VALUES ('%s', '%s');",
+				sprintf_s(query, 200, "INSERT INTO `%s`.`stage` (`account_id`, `stageid`) VALUES (`%d`, `%d`);",
 					DB_NAME, stStageClear.iAccountNo, stStageClear.iStageID);
 				break;
 
 			case df_DBQUERY_MSG_PLAYER_UPDATE:
-
+				st_DBQUERY_MSG_PLAYER_UPDATE stUpdate;
+				StreamQueue.Get((char *)&stUpdate, header.iSize);
+				sprintf_s(query, 200, "INSERT INTO `%s`.`player` (`accountno`, `level`, `exp`) VALUES (`%d`, `%d`, `%d`);",
+					DB_NAME, stUpdate.iAccountNo, stUpdate.iLevel, stUpdate.iExp);
 				break;
 
 			default:
@@ -243,6 +265,9 @@ void Initial()
 	StreamQueue.ClearBuffer();
 	b_shutdown = FALSE;
 	g_UpdateTime = 0;
+
+	iAccountNo = 0;
+	iStageNo = 0;
 }
 
 void main()
