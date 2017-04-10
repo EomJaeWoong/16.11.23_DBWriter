@@ -152,6 +152,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="DBWriter.h" />
+    <ClInclude Include="MemoryPool.h" />
     <ClInclude Include="StreamQueue.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
