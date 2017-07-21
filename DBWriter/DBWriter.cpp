@@ -107,7 +107,7 @@ unsigned __stdcall UpdateThread(LPVOID updateArg)
 			printf("Update Error : Not Correct Type...\n");
 			return -1;
 		}
-
+		
 		StreamQueue.Lock();
 		StreamQueue.Put((char*)&pDBQuery, sizeof(pDBQuery));
 		StreamQueue.Unlock();
@@ -119,7 +119,7 @@ unsigned __stdcall UpdateThread(LPVOID updateArg)
 //--------------------------------------------------------------------------------------------
 // DB 저장 쓰레드
 //--------------------------------------------------------------------------------------------
-unsigned __stdcall DBWriterThread(LPVOID writerArg)
+unsigned __stdcall DBWriterThread(LPVOID writerArg) // 평소엔 자고있게 만들기(이벤트)
 {
 	//--------------------------------------------------------------
 	// MYSQL 객체
@@ -199,6 +199,8 @@ unsigned __stdcall DBWriterThread(LPVOID writerArg)
 			}
 			StreamQueue.Unlock();
 
+			// 여기서 연결이 끊어진 것을 감지
+			// 연결이 끊어지면 재연결을 시도(루프)
 			query_stat = mysql_query(connection, query);
 			if (query_stat != 0)
 			{
@@ -328,6 +330,4 @@ void main()
 	CloseHandle(hDBWriterThread);
 
 	wprintf(L"Queue using size : %d\n", StreamQueue.GetUseSize());
-
-	wprintf(L"isdfjosdfi");
 }
